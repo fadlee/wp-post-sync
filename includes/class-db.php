@@ -95,8 +95,10 @@ class WP_Post_Sync_DB {
      * @return bool Success
      */
     public function queue_post_sync($post_id, $post) {
-        // Only sync published and scheduled posts
-        if (!in_array($post->post_status, ['publish', 'future'])) {
+        // Sync published, scheduled, pending, private, and trashed posts
+        $syncable_statuses = ['publish', 'future', 'pending', 'private', 'trash'];
+        
+        if (!in_array($post->post_status, $syncable_statuses)) {
             return false;
         }
         
@@ -106,6 +108,56 @@ class WP_Post_Sync_DB {
         }
         
         global $wpdb;
+        
+        // Check if already queued
+        $existing = $wpdb->get_var($wpdb->prepare(
+            "SELECT id FROM {$this->sync_queue_table} WHERE post_id = %d AND action = 'sync'",
+            $post_id
+        ));
+        
+        if (!$existing) {
+            $wpdb->insert(
+                $this->sync_queue_table,
+                array(
+                    'post_id' => $post_id,
+                    'post_type' => $post->post_type,
+                    'action' => 'sync',
+                    'priority' => 1
+                )
+            );
+            return true;
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Queue a post status change for syncing
+     * 
+     * @param int $post_id Post ID
+     * @param string $old_status Old post status
+     * @param string $new_status New post status
+     * @return bool Success
+     */
+    public function queue_status_change($post_id, $old_status, $new_status) {
+        // Skip if this is public site
+        if (get_option('wp_post_sync_site_role') === 'public') {
+            return false;
+        }
+        
+        // Only track specific status changes
+        $tracked_statuses = ['publish', 'future', 'pending', 'private', 'trash'];
+        
+        if (!in_array($new_status, $tracked_statuses)) {
+            return false;
+        }
+        
+        global $wpdb;
+        $post = get_post($post_id);
+        
+        if (!$post) {
+            return false;
+        }
         
         // Check if already queued
         $existing = $wpdb->get_var($wpdb->prepare(

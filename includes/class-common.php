@@ -57,6 +57,9 @@ class WP_Post_Sync_Common {
         // Hook into post save
         add_action('save_post', array($this, 'on_save_post'), 10, 3);
         
+        // Hook into post status transitions
+        add_action('transition_post_status', array($this, 'on_status_change'), 10, 3);
+        
         // Hook into media upload
         add_action('add_attachment', array($this, 'on_add_attachment'));
         add_action('edit_attachment', array($this, 'on_add_attachment'));
@@ -96,6 +99,39 @@ class WP_Post_Sync_Common {
         }
         
         $this->db->queue_post_sync($post_id, $post);
+    }
+    
+    /**
+     * Handle post status transitions
+     * 
+     * @param string $new_status New post status
+     * @param string $old_status Old post status
+     * @param object $post Post object
+     */
+    public function on_status_change($new_status, $old_status, $post) {
+        // Skip if old and new status are the same
+        if ($new_status === $old_status) {
+            return;
+        }
+        
+        // Skip revisions and auto-saves
+        if (wp_is_post_revision($post->ID) || wp_is_post_autosave($post->ID)) {
+            return;
+        }
+        
+        // Skip if this is not a post type we want to sync
+        $post_types = apply_filters('wp_post_sync_post_types', array('post', 'page'));
+        if (!in_array($post->post_type, $post_types)) {
+            return;
+        }
+        
+        // Important status changes we want to track: trash, pending, private
+        $important_statuses = array('trash', 'pending', 'private');
+        
+        // If the new status is one we specifically want to track
+        if (in_array($new_status, $important_statuses)) {
+            $this->db->queue_status_change($post->ID, $old_status, $new_status);
+        }
     }
     
     /**
